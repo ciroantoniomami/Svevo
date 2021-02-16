@@ -1,0 +1,234 @@
+---
+title: "Svevo"
+author: "Ciro Antonio Mami"
+date: "1/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(stm)
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(spacyr)
+library(dplyr)
+library(stringi)
+library(topicmodels)
+library(stringr)
+library(ggplot2)
+#spacy_install()
+spacy_download_langmodel(model = "it")
+spacy_initialize(model ="it")
+
+```
+
+```{r}
+data <- read.csv("~/Desktop/Svevo/carteggio.svevo3.csv" , header = TRUE , sep = ";")
+check <- data %>% filter(data$mainLanguage == "ITA")
+check <- check[order(check$year),]
+data_it <- data %>% filter(data$mainLanguage == "ITA")
+data_it <- data_it[order(data_it$year),]
+
+po <- spacy_parse(data_it[,"text"])
+
+processed_corpus <- po %>% filter(po$pos == "NOUN" | po$pos == "PROPN")
+
+doc = rep(0 , length(unique(processed_corpus$doc_id)))
+k = 0
+for(i in unique(processed_corpus$doc_id)){
+  doc[k] <- subset(processed_corpus , doc_id == i , select = token)
+  k = k+1
+}
+
+data_it$text <- doc
+
+data_it2 <-  data %>% filter(data$mainLanguage == "ITA")
+data_it2 <- data_it2[order(data_it$year),]
+data_it2$text <- doc
+for(i in 1:nrow(data_it)){
+  if(data_it[i,"year"] <= 1899)
+    data_it[i,"year"] = 1
+  
+  else if( data_it[i,"year"] > 1899 & data_it[i,"year"] < 1917  )
+    data_it[i,"year"] = 2
+  
+  
+  else
+    data_it[i,"year"] = 3
+  
+  data_it[i , "text"] <- paste( unlist(data_it[i , "text"] ), collapse=' ')
+  data_it2[i , "text"] <- paste( unlist(data_it2[i , "text"] ), collapse=' ')                         
+}
+corpus <- textProcessor(data_it[,"text"], metadata = data_it[,-ncol(data_it)]  , language = "it"  , customstopwords = c('schmitz', 'signore', 'signora', 'ettore', 'lettera', 'parola', 'fare', 'cosa' , 'acqua' , 'sera' , 'bepi' , 'mattina' , 'mano','trieste'  ))
+
+corpus2 <- textProcessor(data_it2[,"text"], metadata = data_it2[,-ncol(data_it2)] ,ucp = TRUE , language = "it"  , customstopwords = c('schmitz', 'signore', 'signora', 'ettore', 'lettera', 'parola', 'fare', 'cosa' , 'acqua' , 'sera', 'mattina' , 'mano','trieste' , 'pom' , 'murano'))
+
+corpus_prep <- prepDocuments(corpus$documents ,corpus$vocab , corpus$meta , lower.thresh = 5 , upper.thresh = 300)
+
+corpus_prep2 <- prepDocuments(corpus2$documents ,corpus2$vocab , corpus2$meta , lower.thresh = 5 , upper.thresh = 300)
+```
+
+
+```{r}
+#model_prev <- stm(corpus_prep$documents , corpus_prep$vocab , K = 4 , prevalence = ~ year , data = corpus_prep$meta , init.type = "LDA")
+#model_only <- stm(corpus_prep$documents , corpus_prep$vocab , K = 4 , init.type = "LDA")
+#model_both <-  stm(corpus_prep$documents , corpus_prep$vocab , K = 4 , prevalence = ~ year , content = ~year , data = corpus_prep$meta , init.type = "LDA")
+
+#model_content <- stm(corpus_prep$documents , corpus_prep$vocab , K = 4 , content = ~ corpus , data = corpus_prep$meta , init.type = "LDA")
+
+
+model_best <-  stm(corpus_prep2$documents , corpus_prep2$vocab , K = 4 , prevalence = ~ s(year , df = 200)  , data = corpus_prep2$meta , init.type = "LDA" , verbose =FALSE)  ##New best
+
+
+model_best5 <-  stm(corpus_prep2$documents , corpus_prep2$vocab , K = 5 , prevalence = ~ s(year)  , data = corpus_prep2$meta , init.type = "LDA" , verbose =FALSE)  ##New best
+#model_corpusyear <-  stm(corpus_prep2$documents , corpus_prep2$vocab , K = 4 , prevalence = ~ corpus + year , data = corpus_prep2$meta , init.type = "LDA")
+
+#model_corpusyear_slice <-  stm(corpus_prep$documents , corpus_prep$vocab , K = 4 , prevalence = ~ corpus + year , data = corpus_prep$meta , init.type = "LDA")
+
+
+```
+
+```{r}
+cloud(model_best,topic = 1)
+cloud(model_best,topic = 2)
+cloud(model_best,topic = 3)
+cloud(model_best,topic = 4)
+
+
+label_best <- labelTopics(model_best , n = 20)
+
+#label_prev <- labelTopics(model_prev , n = 9)   ##Best
+#label_content <- labelTopics(model_content , n = 9)
+#
+#label_percorpusyear <- labelTopics(model_corpusyear) 
+#
+#label_percorpusyear_slices <- labelTopics(model_corpusyear_slice) ##Best
+#label_year <- labelTopics(model_year_prev)
+  
+```
+
+
+```{r}
+library(quanteda)
+q <- findThoughts(model_best,check[-826,"text"],topics = c(3), n=4)
+
+  #plot(model_prev,type="hist")
+ 
+  
+#Creating topic x documents   
+  TopicsDocuments <- model_best$theta
+  TopicsDocuments <- as.data.frame(TopicsDocuments)
+  TopicsDocuments$topic <- rep(0, nrow(TopicsDocuments))
+  for(i in 1:nrow(model_best$theta)){
+    for(j in 1:(ncol(TopicsDocuments)-1)){
+    #TopicsDocuments[i,j] <- ifelse(model_prev$theta[i,j] == max(model_prev$theta[i,]) , model_prev$theta[i,j],0 )
+    TopicsDocuments[i,5] <- ifelse(model_best$theta[i,j] == max(model_best$theta[i,]) , j , TopicsDocuments[i,5])
+    }
+  }
+  TopicsDocuments$year <- data_it$year[-826]
+  TopicsDocuments$id <- data_it$n[-826]
+  write.csv(TopicsDocuments,file ="TopicDocuments.csv")
+  TopicsDocuments$text <- data_it$text[-826]
+  
+  
+  #Text per year and per topic
+  TextbyYear <- TopicsDocuments %>% group_by(year,topic , .add = TRUE)
+  TextbyYear <- TextbyYear %>% summarise(text = str_c(text , collapse = " "))
+ 
+  
+  for(i in 1:nrow(TextbyYear)){
+    TextbyYear$text[i] <- removeWords(tolower(TextbyYear$text[i]),c('schmitz', 'signore', 'signora', 'ettore', 'lettera', 'parola', 'fare', 'cosa' , 'acqua' , 'sera' , 'bepi' , 'mattina' , 'mano','trieste' ,'s.', 'aff.o','tue','moglie'))
+  TextbyYear$text[i] <- corpus(TextbyYear$text[i])
+  }
+  TextbyYear$text <- spacy_tokenize(TextbyYear$text,remove_punct = TRUE,
+  remove_url = TRUE,
+  remove_numbers = TRUE,
+  remove_separators = TRUE,
+  remove_symbols = TRUE)
+#Plot the most important word
+ # for(i in 1:nrow(TextbyYear)){
+ # print("Year")
+ # print(TextbyYear$year[i])
+ # print("Topic")
+ # print(TextbyYear$topic[i])
+ # print(sort(table(TextbyYear$text[i]), decreasing = T)[1:10])
+ # }
+  
+  ##Estiate Effect
+ 
+  eff <- estimateEffect(1:4 ~ s(year),model_best,corpus_prep2$meta)
+  
+
+  TextbyYear$id <- c(1:12)
+  prova <- TermDocumentMatrix(Corpus(VectorSource(TextbyYear$text)))
+  prova2 <- DocumentTermMatrix(Corpus(VectorSource(TextbyYear$text)))
+  
+  tf <- as.matrix(prova)
+  idf <- log( ncol(tf) / ( 1 + rowSums(tf != 0) ) )
+  
+  
+  idf <- diag(idf) 
+  tf_idf <- crossprod(tf, idf)
+  colnames(tf_idf) <- rownames(tf)
+  tf_idf <- tf_idf / sqrt( rowSums( tf_idf^2 ) )
+  
+  #tf_idf <- as.data.frame(tf_idf)
+  
+  for(i in 1: nrow(tf_idf)){
+    print("Year")
+    print(TextbyYear$year[i])
+    print("Topic")
+    print(TextbyYear$topic[i])
+    print(sort(tf_idf[i,],decreasing = T)[1:20])
+  }
+  
+  period3 <- data.frame(c("senilità","crémieux","larbaud","montale","editore","libro","villa", "articolo","zeno","joyce","copie" ))
+  colnames(period3) <- "word"
+  period3$freq <- c(0.29440365, 0.28133887  ,  0.24757821  ,  0.23632465 ,   0.17630569  ,  0.17412175 ,   0.16100200 ,   0.15527374,    0.14720183 ,0.14490180  ,  0.13504266)
+  period2 <- data.frame(c( "ario",         "svago",         "bruno",      "dicembre",        "tribel",   "centotrenta",      "estraneo","fragranza",       "inganna"))
+  colnames(period2) <- "word"
+  period2$freq <- c(0.2650734       , 0.2650734    ,    0.2576539   ,     0.2510976    ,    0.2100657     ,   0.1713012  ,     0.1713012 ,
+                     0.1713012  ,      0.1713012)
+  wordcloud(period3$word,period3$freq)
+ plot(eff, covariate = "year" , model=model_best,  method="continuous", labeltype = "custom" , custom.labels= c("Travel","Family", "Work" , "Literature"))
+ 
+ travelperiod2 <- data.frame(c("tolone",     "chatham",   "marsiglia",    "plymouth",     "viaggio",    "frantzen",      "titina",        "olga","lettere", "inghilterra",      "levico",      "londra" ))
+ colnames(travelperiod2) <- "word"
+ travelperiod2$freq <- c( 0.30028115  ,   0.25116671 ,    0.23860838  ,   0.18666125  ,   0.17581670  ,  0.17581670   ,  0.17267711  ,   0.14648185 , 0.14325003  ,   0.13878909  ,   0.13085828 ,    0.11937503  )
+ggsave(filename = "eff.png" ,plot = eff)
+
+toLDAvis(model_best, corpus_prep2$documents, R = NA, reorder.topics = FALSE)
+toLDAvis(model_best5, corpus_prep2$documents)
+```
+
+```{r}
+beta <- tidy(model_best , matrix  = "beta")
+```
+
+
+
+
+```{r}
+models <- manyTopics(corpus_prep$documents , corpus_prep$vocab , K = c(3,4,5,6,7) , prevalence = ~ year , data = corpus_prep$meta , init.type = "LDA", runs= 20)
+
+models
+
+
+ldacorpus <- convertCorpus(corpus_prep$documents , corpus_prep$vocab , type ="lda")
+
+dtm <- ldaformat2dtm(ldacorpus$documents , ldacorpus$vocab)
+LDAmodel <- lda.collapsed.gibbs.sampler(ldacorpus$documents, K = 4 , ldacorpus$vocab, num.iterations = 500 , alpha = 0.1 , eta =0.1)
+top.topic.documents(LDAmodel$document_sums)
+top.topic.words(LDAmodel$topics)
+prova <- FindTopicsNumber(dtm , c(4,5,6,7,8,9,10) , method="Gibbs")
+FindTopicsNumber_plot(prova)
+toLDAvis(LDAmodel, ldacorpus$documents)
+toLDAvis(LDAmodel, ldacorpus$documents)
+```
+
+
+
